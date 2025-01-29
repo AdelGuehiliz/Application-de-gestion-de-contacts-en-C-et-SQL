@@ -1,93 +1,115 @@
-using System;
-using System.Collections.Generic;
-using System.Data.SQLite;
-using System.Windows.Forms;
+#include <stdio.h>
+#include <stdlib.h>
+#include <sqlite3.h>
+#include <string.h>
 
-namespace GestionContacts
-{
-    public partial class MainForm : Form
-    {
-        private SQLiteConnection connection;
+#define MAX_LEN 100
 
-        public MainForm()
-        {
-            InitializeComponent();
-            connection = new SQLiteConnection("Data Source=contacts.db");
-            connection.Open();
-            InitializeDatabase();
-            LoadContacts();
-        }
+void initialize_database(sqlite3 *db);
+void load_contacts(sqlite3 *db);
+void add_contact(sqlite3 *db, const char *name, const char *phone, const char *email);
+void clear_input_buffer();
 
-        private void InitializeDatabase()
-        {
-            string createTableQuery = "CREATE TABLE IF NOT EXISTS Contacts (Id INTEGER PRIMARY KEY, Name TEXT, PhoneNumber TEXT, Email TEXT)";
-            SQLiteCommand command = new SQLiteCommand(createTableQuery, connection);
-            command.ExecuteNonQuery();
-        }
-
-        private void LoadContacts()
-        {
-            contactsListBox.Items.Clear();
-            string query = "SELECT * FROM Contacts";
-            SQLiteCommand command = new SQLiteCommand(query, connection);
-            SQLiteDataReader reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                string name = reader["Name"].ToString();
-                string phoneNumber = reader["PhoneNumber"].ToString();
-                string email = reader["Email"].ToString();
-                Contact contact = new Contact(name, phoneNumber, email);
-                contactsListBox.Items.Add(contact);
-            }
-            reader.Close();
-        }
-
-        private void addContactButton_Click(object sender, EventArgs e)
-        {
-            string name = nameTextBox.Text;
-            string phoneNumber = phoneNumberTextBox.Text;
-            string email = emailTextBox.Text;
-            if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(phoneNumber))
-            {
-                string insertQuery = "INSERT INTO Contacts (Name, PhoneNumber, Email) VALUES (@Name, @PhoneNumber, @Email)";
-                SQLiteCommand command = new SQLiteCommand(insertQuery, connection);
-                command.Parameters.AddWithValue("@Name", name);
-                command.Parameters.AddWithValue("@PhoneNumber", phoneNumber);
-                command.Parameters.AddWithValue("@Email", email);
-                command.ExecuteNonQuery();
-                LoadContacts();
-                ClearTextBoxes();
-            }
-            else
-            {
-                MessageBox.Show("Name and phone number are required fields.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-
-        private void ClearTextBoxes()
-        {
-            nameTextBox.Text = "";
-            phoneNumberTextBox.Text = "";
-            emailTextBox.Text = "";
-        }
+int main() {
+    sqlite3 *db;
+    int rc = sqlite3_open("contacts.db", &db);
+    if (rc) {
+        fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
+        return 1;
     }
 
-    public class Contact
-    {
-        public string Name { get; set; }
-        public string PhoneNumber { get; set; }
-        public string Email { get; set; }
+    initialize_database(db);
 
-        public Contact(string name, string phoneNumber, string email)
-        {
-            Name = name;
-            PhoneNumber = phoneNumber;
-            Email = email;
-        }
+    int choice;
+    char name[MAX_LEN], phone[MAX_LEN], email[MAX_LEN];
 
-        public override string ToString()
-        {
-            return $"{Name} - {PhoneNumber} - {Email}";
+    do {
+        printf("\nMenu:\n");
+        printf("1. Afficher les contacts\n");
+        printf("2. Ajouter un contact\n");
+        printf("3. Quitter\n");
+        printf("Votre choix: ");
+        scanf("%d", &choice);
+        clear_input_buffer();
+
+        switch (choice) {
+            case 1:
+                load_contacts(db);
+                break;
+            case 2:
+                printf("Nom: ");
+                fgets(name, MAX_LEN, stdin);
+                name[strcspn(name, "\n")] = 0;
+
+                printf("Numéro de téléphone: ");
+                fgets(phone, MAX_LEN, stdin);
+                phone[strcspn(phone, "\n")] = 0;
+
+                printf("Email: ");
+                fgets(email, MAX_LEN, stdin);
+                email[strcspn(email, "\n")] = 0;
+
+                add_contact(db, name, phone, email);
+                break;
+            case 3:
+                printf("Au revoir !\n");
+                break;
+            default:
+                printf("Choix invalide, veuillez réessayer.\n");
         }
+    } while (choice != 3);
+
+    sqlite3_close(db);
+    return 0;
+}
+
+void initialize_database(sqlite3 *db) {
+    const char *sql = "CREATE TABLE IF NOT EXISTS Contacts (Id INTEGER PRIMARY KEY, Name TEXT, PhoneNumber TEXT, Email TEXT);";
+    char *errMsg = NULL;
+    if (sqlite3_exec(db, sql, 0, 0, &errMsg) != SQLITE_OK) {
+        fprintf(stderr, "Erreur SQL: %s\n", errMsg);
+        sqlite3_free(errMsg);
     }
+}
+
+void load_contacts(sqlite3 *db) {
+    const char *sql = "SELECT * FROM Contacts";
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Erreur de lecture de la base de données.\n");
+        return;
+    }
+
+    printf("\nListe des contacts:\n");
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        printf("%s - %s - %s\n",
+               sqlite3_column_text(stmt, 1),
+               sqlite3_column_text(stmt, 2),
+               sqlite3_column_text(stmt, 3));
+    }
+    sqlite3_finalize(stmt);
+}
+
+void add_contact(sqlite3 *db, const char *name, const char *phone, const char *email) {
+    const char *sql = "INSERT INTO Contacts (Name, PhoneNumber, Email) VALUES (?, ?, ?);";
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Erreur de préparation SQL.\n");
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, phone, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, email, -1, SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        fprintf(stderr, "Erreur lors de l'ajout du contact.\n");
+    } else {
+        printf("Contact ajouté avec succès !\n");
+    }
+    sqlite3_finalize(stmt);
+}
+
+void clear_input_buffer() {
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF);
 }
